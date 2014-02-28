@@ -93,12 +93,12 @@ def nnce(target, prediction):
     # on the GPU, which is why we reduce it to using AdvancedSubtensor.
 
     if prediction.ndim == 3:
-        # We are looking at a 3D problem (e.g. via recurrent nets) and this
-        # make it a 2D problem.
+        # We are looking at a 3D problem (e.g. via recurrent nets)
+        # and this makes it a 2D problem.
         target_flat = target.flatten()
         prediction_flat = prediction.flatten()
     elif prediction.ndim == 2:
-        target_flat = target
+        target_flat = target.flatten()
         prediction_flat = prediction.flatten()
     else:
         raise ValueError('only 2 or 3 dims supported for nnce')
