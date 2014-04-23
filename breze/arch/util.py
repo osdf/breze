@@ -56,20 +56,20 @@ def unflatten(tmpl, flat):
 
 
 def theano_function_with_nested_exprs(variables, exprs, *args, **kwargs):
-    """Creates and returns a theano.function that takes values for `variables`
-    as arguments, where `variables` may contain nested lists and/or tuples,
-    and returns values for `exprs`, where again `exprs` may contain nested
+    """Creates and returns a ``theano.function`` that takes values for
+    ``variables``
+    as arguments, where ``variables` may contain nested lists and/or tuples,
+    and returns values for ``exprs``, where again ``exprs`` may contain nested
     lists and/or tuples.
 
-    All other arguments are passed to theano.function without modification."""
+    All other arguments are passed to ``theano.function`` without
+    modification."""
 
     flat_variables = flatten(variables)
     flat_exprs = flatten(exprs)
 
     flat_function = theano.function(
         flat_variables, flat_exprs,
-        # HOTFIX
-        allow_input_downcast=True,
         *args, **kwargs)
 
     def wrapper(*fargs):
@@ -135,7 +135,7 @@ def cpu_expr_to_gpu(expr, unsafe=False):
     """
     expr_ = T.cast(expr, 'float32')
     expr_ = theano.Out(theano.sandbox.cuda.basic_ops.gpu_from_host(expr),
-                      borrow=unsafe)
+                       borrow=unsafe)
 
     expr_.name = expr.name
     return expr_
@@ -191,9 +191,24 @@ def lookup(what, where, default=None):
         res = getattr(where, what, default)
     else:
         res = what
-    if res is None:
-        raise ValueError('could not find %s' % what)
     return res
+
+
+def get_named_variables(dct, name=True, overwrite=False, prefix=''):
+    """Return a dictionary with all the items from ``dct`` with only Theano
+    variables/expressions.
+
+    If ``name`` is set to True, the variables will be named accordingly, however
+    not be overwritten unless ``overwrite`` is True as well.
+    """
+    exprs = [('%s%s' % (prefix, k), v) for k, v in dct.items()
+             if isinstance(v, theano.tensor.basic.TensorVariable)]
+
+    if name:
+        for k, v in exprs:
+            if not hasattr(v, 'name') or overwrite:
+                v.name = '%s%s' % (prefix, k)
+    return dict(exprs)
 
 
 def lookup_some_key(what, where, default=None):
@@ -208,16 +223,6 @@ def lookup_some_key(what, where, default=None):
         except KeyError:
             pass
     return default
-
-
-def opt_from_model(model, fargs, args, opt_klass, opt_kwargs):
-    """Return an optimizer object given a model and an optimizer specification.
-    """
-    d_loss_d_pars = T.grad(model.exprs['loss'], model.parameters.flat)
-    f = model.function(fargs, 'loss', explicit_pars=True)
-    fprime = model.function(fargs, d_loss_d_pars, explicit_pars=True)
-    opt = opt_klass(model.parameters.data, f, fprime, args=args, **opt_kwargs)
-    return opt
 
 
 def theano_expr_bfs(expr):
@@ -254,14 +259,14 @@ class ParameterSet(object):
     tensor/variable refers to the symbolic Theano variable.
 
 
-    Parameters
-    ----------
-
     Initialization takes a variable amount of keyword arguments, where each has
     to be a single integer or a tuple of arbitrary length containing only
     integers. For each of the keyword argument keys a tensor of the shape given
     by the value will be created. The key is the identifier of that variable.
 
+    All symbolic variables can be accessed as attributes of the object, all
+    concrete variables as keys. E.g. parameter_set.x references the symbolic
+    variable, while parameter_set['x'] will give you the concrete array.
 
     Attributes
     ----------
@@ -270,20 +275,15 @@ class ParameterSet(object):
         Total amount of parameters.
 
     flat : Theano vector
-        Flat one dimensional tensor containing all the different tensors
-        flattened out. Symbolic pendant to ``data``.
+        Flat one dimensional tensor containing all the different tensors flattened out. Symbolic pendant to ``data``.
 
     data : array_like
         Concrete array containig all the different arrays flattened out.
         Concrete pendant to ``flat``.
 
-    views : dictionary
+    views : dict
         All parameter arrays can be accessed by with their identifier as key
         in this dictionary.
-
-    All symbolic variables can be accessed as attributes of the object, all
-    concrete variables as keys. E.g. parameter_set.x references the symbolic
-    variable, while parameter_set['x'] will give you the concrete array.
     """
 
     def __init__(self, **kwargs):
@@ -353,6 +353,21 @@ class Model(object):
     targets, the data (3) *expressions* composed out of the two, such as the
     prediction of a model or the loss resulting from those.
 
+    There are several "reserved" names for expressions.
+
+      - ``inpt``: observations of a supervised or unsupervised model,
+      - ``target``: desired outputs of a supervised model,
+      - ``loss``: quantity to be optimized for fitting the parameters;
+        might not refer to the criterion of interest, but instead to a
+        regularzied objective.
+      - ``true_loss``: Quantity of interest for the user, e.g. the loss without
+        regularization or the empirical risk.
+
+    Overriding these names is possible in general, but is part of the interface
+    and will lead to unexpected behaviour with functionality building upon
+    this.
+
+
     Attributes
     ----------
 
@@ -363,44 +378,27 @@ class Model(object):
         Containig the expressions. Out of convenience, the external variables
         are held in here as well.
 
-    updates : dictionary containing update variables, e.g. due to the use of
-        ``theano.scan``.
-
-
-    Expression Names
-    ----------------
-
-    There are several "reserved" names for expressions.
-
-      - ``inpt``: observations of a supervised or unsupervised model,
-      - ``target``: desired outputs of a supervised model,
-      - ``loss``: quantity to be optimized for fitting the parameters;
-        might not refer to the criterion of interest, but instead to a
-        regularzied objective.
-      - ``true_loss``: Quantity of interst for the user, e.g. the loss without
-        regularization or the empirical risk.
-
-    Overriding these names is possible in general, but is part of the interface
-    and will lead to unexpected behaviour with functionality building upon
-    this."""
+    updates : dict
+        Containing update variables, e.g. due to the use of ``theano.scan``.
+    """
 
     def __init__(self):
         self.updates = collections.defaultdict(dict)
-        self.init_pars()
-        self.init_exprs()
+        self._init_pars()
+        self._init_exprs()
 
         # This is a dictionary which is supposed to hold substitions of
         # variables from .exprs for the use with the GPU.
         self.gpu_variable_subs = {}
 
-    def init_pars(self):
+    def _init_pars(self):
         pass
 
-    def init_exprs(self):
+    def _init_exprs(self):
         pass
 
     def _unify_variables(self, variables):
-        """Given a list of variables where each identifier given as a astring
+        """Given a list of variables where each identifier given as a string
         is repaced by the corresponding variable from the .exprs
         dictionary."""
         def lookup(varname):
@@ -525,16 +523,18 @@ class Model(object):
             variables, exprs, givens=givens, mode=mode,
             on_unused_input=on_unused_input, updates=updates)
 
+        if GPU:
+            f = gnumpy_func_wrap(f)
+
         if not explicit_pars:
             def f_implicit_pars(*args, **kwargs):
                 return f(self.parameters.data, *args, **kwargs)
             f_implicit_pars.theano_func = f.theano_func
+            f_implicit_pars.breze_func = True
             return f_implicit_pars
 
-        if GPU:
-            f = gnumpy_func_wrap(f)
-
         else:
+            f.breze_func = True
             return f
 
     def var_exp_for_gpu(self, variables, exprs, outputs=True):
@@ -581,6 +581,14 @@ class Model(object):
         gpu_exprs = unflatten(exprs, gpu_exprs_flat)
 
         return gpu_variables, gpu_exprs
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        to_delete = [k for k in state if getattr(state[k], 'breze_func', False)]
+        for key in to_delete:
+            del state[key]
+
+        return state
 
 
 class PrintEverythingMode(theano.Mode):

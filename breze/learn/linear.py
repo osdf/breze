@@ -3,19 +3,22 @@
 
 import numpy as np
 import theano
+import theano.tensor as T
 
-from breze.arch.model.linear import Linear
+from breze.arch.component.common import supervised_loss
+from breze.arch.model import linear
+from breze.arch.util import ParameterSet, Model
 from breze.learn.base import SupervisedBrezeWrapperBase
 
 
-class GeneralizedLinearModel(Linear, SupervisedBrezeWrapperBase):
+class Linear(Model, SupervisedBrezeWrapperBase):
     """Class to represent a linear model."""
 
     def __init__(self, n_inpt, n_output,
                  out_transfer='identity', loss='squared',
                  optimizer='lbfgs', batch_size=None,
                  max_iter=1000, verbose=False):
-        """Create a GeneralizedLinearModel object.
+        """Create a Linear object.
 
         Parameters
         ---------
@@ -54,16 +57,34 @@ class GeneralizedLinearModel(Linear, SupervisedBrezeWrapperBase):
         verbose : boolean
             Flag indicating whether to print out information during fitting.
         """
-        super(GeneralizedLinearModel, self).__init__(
-            n_inpt, n_output, out_transfer, loss)
-
+        self.n_inpt = n_inpt
+        self.n_output = n_output
+        self.out_transfer = out_transfer
+        self.loss = loss
         self.optimizer = optimizer
         self.batch_size = batch_size
-
         self.max_iter = max_iter
         self.verbose = verbose
 
         self.f_predict = None
 
+        super(Linear, self).__init__()
+
+    def _init_pars(self):
+        parameter_spec = linear.parameters(self.n_inpt, self.n_output)
+        self.parameters = ParameterSet(**parameter_spec)
         self.parameters.data[:] = np.random.standard_normal(
             self.parameters.data.shape).astype(theano.config.floatX)
+
+    def _init_exprs(self):
+        self.exprs = {
+            'inpt': T.matrix('inpt'),
+            'target': T.matrix('target')
+        }
+        P = self.parameters
+
+        self.exprs.update(linear.exprs(
+            self.exprs['inpt'], P.in_to_out, P.bias, self.out_transfer))
+
+        self.exprs.update(supervised_loss(
+            self.exprs['target'], self.exprs['output'], self.loss))

@@ -1,6 +1,5 @@
 """Module for manipulating data."""
 
-import itertools
 import math
 import random
 
@@ -9,7 +8,7 @@ import scipy.interpolate
 
 from sklearn.utils import check_random_state
 
-from climin.util import minibatches, iter_minibatches
+# TODO numpy doc
 
 
 def one_hot(array, n_classes=None):
@@ -53,7 +52,8 @@ def shuffle_many(arrays, axes, random_state=None):
             a[old_index], a[new_index] = a[new_index], a[old_index]
 
 
-def padzeros(lst):
+def padzeros(lst, front=True):
+    # TODO add docs for ``front``
     """Given a list of arrays, pad every array with up front  zeros until they
     reach unit length.
 
@@ -67,10 +67,14 @@ def padzeros(lst):
     item_shape = [maxlength] + restshape
     total_shape = [n_items] + item_shape
 
-    data = scipy.zeros(total_shape)
+    data = scipy.zeros(total_shape, dtype=lst[0].dtype)
     for i in range(n_items):
+        # Iterate over indices because we work in place of the list.
         thislength = lst[i].shape[0]
-        data[i][-thislength:] = lst[i]
+        if front:
+            data[i][-thislength:] = lst[i]
+        else:
+            data[i][:thislength] = lst[i]
 
     return data
 
@@ -161,10 +165,8 @@ def iter_windows(X, size, offset=1):
 
     `X` is expected to be a list of arrays, where each array represents a
     sequence along its first axis."""
-    x_count = itertools.count(0)
     for seq in X:
         for j in [k * offset for k in range(n_windows(seq, size, offset))]:
-            i = x_count.next()
             yield seq[j:j + size]
 
 

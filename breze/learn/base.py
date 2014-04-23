@@ -15,8 +15,8 @@ import numpy as np
 import theano
 import theano.tensor as T
 
+from climin.util import iter_minibatches
 
-from data import iter_minibatches
 
 GPU = theano.config.device == 'gpu'
 if GPU:
@@ -57,7 +57,7 @@ class BrezeWrapperBase(object):
         flat parameters of the model."""
         return T.grad(self.exprs['loss'], self.parameters.flat)
 
-    def _make_optimizer(self, f, fprime, args, wrt=None, f_Hp=None):
+    def _make_optimizer(self, f, fprime, args, wrt=None, f_Hp=None, info=None):
         if isinstance(self.optimizer, (str, unicode)):
             ident = self.optimizer
             kwargs = {}
@@ -79,7 +79,10 @@ class BrezeWrapperBase(object):
             kwargs['f_Hp'] = f_Hp
 
         kwargs['args'] = args
-        return climin.util.optimizer(ident, wrt, **kwargs)
+        opt = climin.util.optimizer(ident, wrt, **kwargs)
+        if info is not None:
+            opt.set_from_info(info)
+        return opt
 
     def powerfit(self, fit_data, eval_data, stop, report, eval_train_loss=True):
         """Iteratively fit the model.
@@ -116,11 +119,9 @@ class BrezeWrapperBase(object):
             return True if the iterator should yield a value.
         :returns: An iterator over info dictionaries.
         """
+        # TODO document eval train loss
         self.CTRL_C_FLAG = False
         signal.signal(signal.SIGINT, self._ctrl_c_handler)
-
-        loss_key = 'true_loss' if 'true_loss' in self.exprs else 'loss'
-        f_loss = self.function(self.data_arguments, loss_key)
 
         best_pars = None
         best_loss = float('inf')
@@ -131,10 +132,10 @@ class BrezeWrapperBase(object):
                     # Not all optimizers, e.g. ilne and gd, do actually
                     # calculate the loss.
                     if eval_train_loss:
-                        info['loss'] = ma.scalar(f_loss(*fit_data))
+                        info['loss'] = ma.scalar(self.score(*fit_data))
                     else:
                         info['loss'] = 0.
-                info['val_loss'] = ma.scalar(f_loss(*eval_data))
+                info['val_loss'] = ma.scalar(self.score(*eval_data))
 
                 if info['val_loss'] < best_loss:
                     best_loss = info['val_loss']
@@ -156,6 +157,11 @@ class SupervisedBrezeWrapperBase(BrezeWrapperBase):
 
     data_arguments = 'inpt', 'target'
     sample_dim = 0, 0
+
+    f_score = None
+    f_predict = None
+    _f_loss = None
+    _f_dloss = None
 
     def _make_loss_functions(self, mode=None, givens=None,
                              on_unused_input='raise'):
@@ -194,7 +200,7 @@ class SupervisedBrezeWrapperBase(BrezeWrapperBase):
         args = ((i, {}) for i in data)
         return args
 
-    def iter_fit(self, X, Z):
+    def iter_fit(self, X, Z, info_opt=None):
         """Iteratively fit the parameters of the model to the given data with
         the given error function.
 
@@ -207,10 +213,11 @@ class SupervisedBrezeWrapperBase(BrezeWrapperBase):
         :param X: Array representing the inputs.
         :param Z: Array representing the outputs.
         """
-        f_loss, f_d_loss = self._make_loss_functions()
+        if self._f_loss is None or self._f_dloss is None:
+            self._f_loss, self._f_dloss = self._make_loss_functions()
 
         args = self._make_args(X, Z)
-        opt = self._make_optimizer(f_loss, f_d_loss, args)
+        opt = self._make_optimizer(self._f_loss, self._f_dloss, args, info=info_opt)
 
         for i, info in enumerate(opt):
             yield info
@@ -260,13 +267,45 @@ class SupervisedBrezeWrapperBase(BrezeWrapperBase):
 
         return Y
 
+    def _make_score_function(self):
+        """Return a function to predict targets from input sequences."""
+        key = 'true_loss' if 'true_loss' in self.exprs else 'loss'
+        return self.function(['inpt', 'target'], key)
+
+    def score(self, X, Z):
+        """Return the score of the model given the input and targets.
+
+        Parameters
+        ----------
+
+        X : array_like
+            Input to the model.
+
+        Z : array_like
+            Target for the inputs.
+
+        Returns
+        -------
+
+        l : scalar
+            Score of the model.
+        """
+        X = cast_array_to_local_type(X)
+        Z = cast_array_to_local_type(Z)
+        if self.f_score is None:
+            self.f_score = self._make_score_function()
+        l = self.f_score(X, Z)
+
+        return l
+
 
 class UnsupervisedBrezeWrapperBase(BrezeWrapperBase):
 
     data_arguments = 'inpt',
     sample_dim = 0,
+    f_score = None
 
-    def iter_fit(self, X):
+    def iter_fit(self, X, info_opt=None):
         """Iteratively fit the parameters of the model to the given data.
 
         Each iteration of the learning algorithm is an iteration of the
@@ -280,7 +319,7 @@ class UnsupervisedBrezeWrapperBase(BrezeWrapperBase):
         f_loss, f_d_loss = self._make_loss_functions()
 
         args = self._make_args(X)
-        opt = self._make_optimizer(f_loss, f_d_loss, args)
+        opt = self._make_optimizer(f_loss, f_d_loss, args, info=info_opt)
 
         for i, info in enumerate(opt):
             yield info
@@ -333,6 +372,33 @@ class UnsupervisedBrezeWrapperBase(BrezeWrapperBase):
             ['inpt'], d_loss, explicit_pars=True, givens=givens, mode=mode,
             on_unused_input=on_unused_input)
         return f_loss, f_d_loss
+
+    def _make_score_function(self):
+        """Return a function to predict targets from input sequences."""
+        key = 'true_loss' if 'true_loss' in self.exprs else 'loss'
+        return self.function(['inpt'], key)
+
+    def score(self, X):
+        """Return the score of the model given the input and targets.
+
+        Parameters
+        ----------
+
+        X : array_like
+            Input to the model.
+
+        Returns
+        -------
+
+        l : scalar
+            Score of the model.
+        """
+        X = cast_array_to_local_type(X)
+        if self.f_score is None:
+            self.f_score = self._make_score_function()
+        l = self.f_score(X)
+
+        return l
 
 
 class TransformBrezeWrapperMixin(object):

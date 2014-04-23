@@ -53,6 +53,12 @@ Sampling
    sampling/hmc
 
 
+Trainers
+
+.. toctree::
+   learn/trainer/trainer
+
+
 Helpers, convenience functions and tools
 ----------------------------------------
 
@@ -62,6 +68,27 @@ Helpers, convenience functions and tools
    utils
    display
    :maxdepth: 1
+
+
+Architectures, Components
+-------------------------
+
+.. toctree::    
+   arch/component/norm
+   arch/component/transfer
+   arch/component/loss
+   arch/component/corrupt
+   arch/component/misc
+   arch/component/layer
+   arch/component/common
+   arch/component/distributions/normal
+   arch/component/distributions/mvn
+   arch/util
+
+For variance propagation:
+
+.. toctree::
+   arch/component/varprop/common
 
 
 Implementation Notes
